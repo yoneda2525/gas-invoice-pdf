@@ -13,6 +13,10 @@
 
 ## 画面
 
+明細シート（ここに入力して、メニュー「請求書 → PDF作成」を押す）：
+
+![明細シート](docs/images/sheet.png)
+
 作成されるPDF（ダミーデータ）：
 
 ![請求書PDF](docs/images/invoice.png)
