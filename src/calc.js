@@ -35,6 +35,83 @@ function calcTotals(rows) {
   return { byRate: byRate, subtotal: subtotal, tax: tax, total: subtotal + tax };
 }
 
+var DONE_STATUS = '作成済み';
+var MAX_LINES = 15;
+var REQUIRED = [
+  ['invoiceNo', '請求番号'], ['date', '請求日'], ['customer', '客名'],
+  ['item', '品目'], ['qty', '数量'], ['unitPrice', '単価'], ['taxRate', '税率']
+];
+
+function isEmpty(v) {
+  return v === null || v === undefined || String(v).trim() === '';
+}
+
+function isNum(v) {
+  return typeof v === 'number' && isFinite(v);
+}
+
+function dateKey(v) {
+  return v instanceof Date ? v.getTime() : String(v).trim();
+}
+
+/** 入力欄（状態以外）がすべて空の行。 */
+function isBlankRow(row) {
+  return REQUIRED.every(function (f) { return isEmpty(row[f[0]]); });
+}
+
+/**
+ * 作成済み以外の行を、最初に出た順で請求番号ごとにまとめる。
+ * 状態が空・未作成・エラーの行は対象（エラーは直して再実行できる）。
+ */
+function groupByInvoice(rows) {
+  var groups = [];
+  var index = {};
+  rows.forEach(function (row) {
+    if (isBlankRow(row) || String(row.status).trim() === DONE_STATUS) return;
+    var key = String(row.invoiceNo).trim();
+    if (!(key in index)) {
+      index[key] = groups.length;
+      groups.push({ invoiceNo: key, rows: [] });
+    }
+    groups[index[key]].rows.push(row);
+  });
+  return groups;
+}
+
+/** 問題なしなら null、あれば最初のエラー文言。 */
+function validateGroup(group) {
+  var rows = group.rows;
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    for (var j = 0; j < REQUIRED.length; j++) {
+      if (isEmpty(row[REQUIRED[j][0]])) return 'エラー：' + REQUIRED[j][1] + 'が空';
+    }
+    if (!isNum(row.qty)) return 'エラー：数量が数ではありません';
+    if (!isNum(row.unitPrice)) return 'エラー：単価が数ではありません';
+    if (normalizeTaxRate(row.taxRate) === null) return 'エラー：税率は10%か8%';
+  }
+  if (rows.length > MAX_LINES) return 'エラー：明細が' + MAX_LINES + '行をこえています';
+  for (var k = 1; k < rows.length; k++) {
+    if (String(rows[k].customer).trim() !== String(rows[0].customer).trim()) {
+      return 'エラー：同じ請求番号で客名がちがいます';
+    }
+    if (dateKey(rows[k].date) !== dateKey(rows[0].date)) {
+      return 'エラー：同じ請求番号で請求日がちがいます';
+    }
+  }
+  return null;
+}
+
+/** `請求番号_客名.pdf`。ファイル名に使えない文字は _ に。 */
+function makeFileName(invoiceNo, customer) {
+  return (String(invoiceNo).trim() + '_' + String(customer).trim())
+    .replace(/[\/\\:*?"<>|]/g, '_') + '.pdf';
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { normalizeTaxRate: normalizeTaxRate, calcTotals: calcTotals };
+  module.exports = {
+    normalizeTaxRate: normalizeTaxRate, calcTotals: calcTotals,
+    isBlankRow: isBlankRow, groupByInvoice: groupByInvoice,
+    validateGroup: validateGroup, makeFileName: makeFileName
+  };
 }
