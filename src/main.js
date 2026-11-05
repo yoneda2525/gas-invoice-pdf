@@ -27,6 +27,7 @@ function createInvoices() {
       return;
     }
     try {
+      if (ok > 0) Utilities.sleep(EXPORT_INTERVAL_MS); // 連続PDF化の制限よけ
       var url = createInvoicePdf(ss, settings, group);
       writeStatus(ss, rowIndexes, DONE_STATUS, url);
       ok++;

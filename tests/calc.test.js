@@ -78,3 +78,22 @@ test('groupByInvoice retries rows with empty or error status', () => {
     row({ invoiceNo: 'Y', status: 'エラー：品目が空' })]);
   assert.deepEqual(g.map(x => x.invoiceNo), ['X', 'Y']);
 });
+
+test('normalizeTaxRate accepts plain 10 / 8 and "10"', () => {
+  assert.equal(normalizeTaxRate(10), 0.1);
+  assert.equal(normalizeTaxRate(8), 0.08);
+  assert.equal(normalizeTaxRate('10'), 0.1);
+  assert.equal(normalizeTaxRate(5), null);
+});
+
+test('validateGroup compares dates by calendar day', () => {
+  const morning = new Date(2026, 10, 5, 9, 30);
+  const midnight = new Date(2026, 10, 5);
+  assert.equal(validateGroup({ invoiceNo: 'INV-1',
+    rows: [row({ date: morning }), row({ date: midnight })] }), null);
+  assert.equal(validateGroup({ invoiceNo: 'INV-1',
+    rows: [row({ date: morning }), row({ date: '2026/11/05' })] }), null);
+  assert.equal(validateGroup({ invoiceNo: 'INV-1',
+    rows: [row({ date: morning }), row({ date: new Date(2026, 10, 6) })] }),
+    'エラー：同じ請求番号で請求日がちがいます');
+});

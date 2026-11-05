@@ -3,6 +3,8 @@
  */
 
 var SHEET_TEMPLATE = 'ひな形';
+var EXPORT_INTERVAL_MS = 1500;   // PDF化と PDF化の間に待つ時間
+var EXPORT_RETRY_WAIT_MS = 5000; // 429 のとき、やり直す前に待つ時間
 
 var TEMPLATE_CELLS = {
   invoiceNo: 'F2',
@@ -72,18 +74,26 @@ function exportSheetPdf_(ss, sheet, fileName) {
     '?format=pdf&gid=' + sheet.getSheetId() +
     '&portrait=true&size=A4&fitw=true&gridlines=false' +
     '&sheetnames=false&printtitle=false&pagenumbers=false';
-  var res = UrlFetchApp.fetch(url, {
+  var options = {
     headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
     muteHttpExceptions: true
-  });
+  };
+  var res = UrlFetchApp.fetch(url, options);
+  if (res.getResponseCode() === 429) {
+    // 続けて呼ぶと制限がかかるので、少し待って1回だけやり直す
+    Utilities.sleep(EXPORT_RETRY_WAIT_MS);
+    res = UrlFetchApp.fetch(url, options);
+  }
   if (res.getResponseCode() !== 200) {
     throw new Error('PDF化に失敗（HTTP ' + res.getResponseCode() + '）');
   }
   return res.getBlob().setName(fileName);
 }
 
+/** 自分が持ち主で、ゴミ箱に入っていないフォルダだけを探す。無ければ作る。 */
 function getOrCreateFolder_(name) {
-  var it = DriveApp.getFoldersByName(name);
+  var safe = String(name).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  var it = DriveApp.searchFolders('title = "' + safe + '" and trashed = false and "me" in owners');
   return it.hasNext() ? it.next() : DriveApp.createFolder(name);
 }
 

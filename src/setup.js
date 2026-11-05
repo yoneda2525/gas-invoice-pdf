@@ -5,6 +5,16 @@
 
 function setupDemo() {
   var ss = SpreadsheetApp.getActive();
+  var ui = SpreadsheetApp.getUi();
+  var detail = ss.getSheetByName('明細');
+  if (detail && detail.getLastRow() > 1) {
+    ui.alert('「明細」シートにデータがあるため、見本シートは作りません。\n' +
+      '見本を作るときは、新しいスプレッドシートで実行してください。');
+    return;
+  }
+  var answer = ui.alert('「設定」「明細」「ひな形」シートを見本の内容で作り直します。よろしいですか？',
+    ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
   setupSettings_(ss);
   setupDetail_(ss);
   setupTemplate_(ss);
@@ -36,7 +46,8 @@ function setupSettings_(ss) {
 function setupDetail_(ss) {
   var s = freshSheet_(ss, '明細');
   var header = ['請求番号', '請求日', '客名', '品目', '数量', '単価', '税率', '状態', 'PDFリンク'];
-  var d = new Date();
+  var now = new Date();
+  var d = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // 時刻なし
   var rows = [
     ['INV-0001', d, '株式会社ダミーA', 'Webサイト保守（月額）', 1, 30000, 0.1, '未作成', ''],
     ['INV-0002', d, 'ダミー食堂', '業務用食材', 10, 1250, 0.08, '未作成', ''],

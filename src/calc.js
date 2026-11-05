@@ -9,9 +9,10 @@ var TAX_PERCENTS = [10, 8];
 function normalizeTaxRate(value) {
   var pct = null;
   if (typeof value === 'number' && isFinite(value)) {
-    pct = Math.round(value * 100);
+    // 0.1 のような割合でも、10 のような%の数字でも受け付ける
+    pct = value >= 1 ? Math.round(value) : Math.round(value * 100);
   } else if (typeof value === 'string') {
-    var m = value.trim().match(/^(\d+)\s*[%％]$/);
+    var m = value.trim().match(/^(\d+)\s*[%％]?$/);
     if (m) pct = Number(m[1]);
   }
   return TAX_PERCENTS.indexOf(pct) >= 0 ? pct / 100 : null;
@@ -50,8 +51,17 @@ function isNum(v) {
   return typeof v === 'number' && isFinite(v);
 }
 
+function pad2(n) {
+  return (n < 10 ? '0' : '') + n;
+}
+
+/** 日付を「年/月/日」で比べるための文字列に（時刻は無視）。 */
 function dateKey(v) {
-  return v instanceof Date ? v.getTime() : String(v).trim();
+  if (v instanceof Date) {
+    return v.getFullYear() + '/' + pad2(v.getMonth() + 1) + '/' + pad2(v.getDate());
+  }
+  var m = String(v).trim().match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
+  return m ? m[1] + '/' + pad2(Number(m[2])) + '/' + pad2(Number(m[3])) : String(v).trim();
 }
 
 /** 入力欄（状態以外）がすべて空の行。 */
