@@ -51,6 +51,7 @@ function readDetailRows(ss) {
 function writeStatus(ss, rowIndexes, status, pdfUrl) {
   var sheet = getSheetOrThrow_(ss, SHEET_DETAIL);
   rowIndexes.forEach(function (rowIndex) {
-    sheet.getRange(rowIndex, COL_STATUS, 1, 2).setValues([[status, pdfUrl || '']]);
+    var link = pdfUrl ? '=HYPERLINK("' + pdfUrl + '","PDFを開く")' : '';
+    sheet.getRange(rowIndex, COL_STATUS, 1, 2).setValues([[status, link]]);
   });
 }

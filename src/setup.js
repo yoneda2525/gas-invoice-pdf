@@ -62,7 +62,8 @@ function setupDetail_(ss) {
   s.getRange('F2:F').setNumberFormat('#,##0');
   s.getRange('G2:G').setNumberFormat('0%');
   s.setFrozenRows(1);
-  s.autoResizeColumns(1, header.length);
+  var widths = [90, 95, 150, 190, 50, 80, 55, 160, 100];
+  widths.forEach(function (w, i) { s.setColumnWidth(i + 1, w); });
 }
 
 /** 「ひな形」シートだけを作り直す。明細・設定のデータには触らない。 */
