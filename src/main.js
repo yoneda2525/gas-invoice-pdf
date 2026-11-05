@@ -7,6 +7,7 @@ function onOpen() {
     .createMenu('請求書')
     .addItem('PDF作成', 'createInvoices')
     .addSeparator()
+    .addItem('ひな形を最新にする', 'updateTemplate')
     .addItem('見本シートを作る', 'setupDemo')
     .addToUi();
 }

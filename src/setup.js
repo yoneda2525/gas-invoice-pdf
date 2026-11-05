@@ -65,8 +65,15 @@ function setupDetail_(ss) {
   s.autoResizeColumns(1, header.length);
 }
 
+/** 「ひな形」シートだけを作り直す。明細・設定のデータには触らない。 */
+function updateTemplate() {
+  setupTemplate_(SpreadsheetApp.getActive());
+  SpreadsheetApp.getUi().alert('「ひな形」シートを最新の見た目に作り直しました。');
+}
+
 function setupTemplate_(ss) {
   var s = freshSheet_(ss, 'ひな形');
+  s.getRange('A1:G40').breakApart();
   s.setColumnWidth(1, 70).setColumnWidth(2, 220).setColumnWidth(3, 20)
     .setColumnWidth(4, 60).setColumnWidth(5, 110).setColumnWidth(6, 150).setColumnWidth(7, 110);
   s.getRange('A1:G1').merge().setValue('請　求　書').setFontSize(20)
@@ -75,6 +82,8 @@ function setupTemplate_(ss) {
   s.getRange('E3').setValue('請求日');
   s.getRange('B4').setFontSize(14).setFontWeight('bold');
   s.getRange('E7').setValue('登録番号');
+  // 右上の値は文字として左寄せ（日付や番号が勝手に変換・右寄せされないように）
+  s.getRange('F2:F7').setNumberFormat('@').setHorizontalAlignment('left');
   s.getRange('B6').setValue('下記のとおりご請求申し上げます。');
   s.getRange('A9').setValue('ご請求金額');
   s.getRange('B9').setFormula('=G33').setNumberFormat('"¥"#,##0').setFontSize(16).setFontWeight('bold');
@@ -82,6 +91,11 @@ function setupTemplate_(ss) {
   s.getRange('A11:G11').setValues([['No', '品目', '', '数量', '単価', '税率', '金額']])
     .setFontWeight('bold').setBackground('#eef2f7');
   for (var i = 0; i < 15; i++) s.getRange(12 + i, 1).setValue(i + 1);
+  // 品目は B:C をつなげて1つの欄に（空き列をなくす）
+  for (var r = 11; r <= 26; r++) s.getRange(r, 2, 1, 2).merge();
+  // 税率は文字のまま中央に
+  s.getRange('F11:F26').setHorizontalAlignment('center');
+  s.getRange('F12:F26').setNumberFormat('@');
   s.getRange('A11:G26').setBorder(true, true, true, true, true, true);
   s.getRange('E12:E26').setNumberFormat('#,##0');
   s.getRange('G12:G26').setNumberFormat('#,##0');
