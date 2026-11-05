@@ -17,10 +17,6 @@
 
 ![請求書PDF](docs/images/invoice.png)
 
-## 試してみる
-
-見本シート（コピーして使えます）：**（ここにリンク）**
-
 ## 導入手順
 
 1. 新しいGoogleスプレッドシートを作る
@@ -49,3 +45,10 @@ Google上の動き（シート・PDF）は [手動テストのチェックリス
 ## カスタマイズ例（有料対応）
 
 メール自動送信、ロゴ入り、源泉徴収、複数通貨、freee / マネーフォワード連携など。
+
+## 作成者
+
+[yoneda2525](https://github.com/yoneda2525)（情報学部の学生）。設計と実装は AI（Claude）と一緒に行い、Google上での動作確認は作者が行いました。
+
+スプレッドシート・Excel の面倒な作業の自動化（GAS / Python）を承ります。ご相談は [Issues](https://github.com/yoneda2525/gas-invoice-pdf/issues) からどうぞ。
+
