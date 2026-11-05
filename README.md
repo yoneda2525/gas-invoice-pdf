@@ -13,11 +13,9 @@
 
 ## 画面
 
-| 明細シート | 作成されるPDF |
-|---|---|
-| ![明細シート](docs/images/sheet.png) | ![請求書PDF](docs/images/invoice.png) |
+作成されるPDF（ダミーデータ）：
 
-> 画像は `docs/images/` に置く（ダミーデータのみ）。
+![請求書PDF](docs/images/invoice.png)
 
 ## 試してみる
 
@@ -26,7 +24,7 @@
 ## 導入手順
 
 1. 新しいGoogleスプレッドシートを作る
-2. 拡張機能 → Apps Script を開き、`src/` の5ファイル（`calc.js` `sheet.js` `pdf.js` `setup.js` `main.js`）を同じ名前で貼る
+2. 拡張機能 → Apps Script を開き、[`dist/請求書PDF_コード.txt`](dist/請求書PDF_コード.txt) の中身を `コード.gs` に全部貼って保存（`src/` の5ファイルをまとめたもの）
 3. `setupDemo` を1回実行して権限を許可する（「設定」「明細」「ひな形」シートができる）
 4. スプレッドシートを開き直し、メニュー **請求書 → PDF作成**
 

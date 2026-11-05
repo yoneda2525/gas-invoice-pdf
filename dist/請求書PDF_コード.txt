@@ -1,0 +1,463 @@
+// ===== calc.js =====
+/**
+ * 請求書の計算・入力チェック（純粋関数のみ）。
+ * GAS ではグローバル関数として、Node ではモジュールとして動く。
+ */
+
+var TAX_PERCENTS = [10, 8];
+
+/** 税率を 0.1 / 0.08 にそろえる。使えない値なら null。 */
+function normalizeTaxRate(value) {
+  var pct = null;
+  if (typeof value === 'number' && isFinite(value)) {
+    // 0.1 のような割合でも、10 のような%の数字でも受け付ける
+    pct = value >= 1 ? Math.round(value) : Math.round(value * 100);
+  } else if (typeof value === 'string') {
+    var m = value.trim().match(/^(\d+)\s*[%％]?$/);
+    if (m) pct = Number(m[1]);
+  }
+  return TAX_PERCENTS.indexOf(pct) >= 0 ? pct / 100 : null;
+}
+
+/** 税率ごとの小計・税額（税率ごとに1回だけ切り捨て）と合計。 */
+function calcTotals(rows) {
+  var byPct = {};
+  rows.forEach(function (row) {
+    var pct = Math.round(normalizeTaxRate(row.taxRate) * 100);
+    byPct[pct] = (byPct[pct] || 0) + Number(row.qty) * Number(row.unitPrice);
+  });
+  var byRate = TAX_PERCENTS
+    .filter(function (pct) { return pct in byPct; })
+    .map(function (pct) {
+      var subtotal = byPct[pct];
+      return { rate: pct / 100, subtotal: subtotal, tax: Math.floor(subtotal * pct / 100) };
+    });
+  var subtotal = byRate.reduce(function (s, x) { return s + x.subtotal; }, 0);
+  var tax = byRate.reduce(function (s, x) { return s + x.tax; }, 0);
+  return { byRate: byRate, subtotal: subtotal, tax: tax, total: subtotal + tax };
+}
+
+var DONE_STATUS = '作成済み';
+var MAX_LINES = 15;
+var REQUIRED = [
+  ['invoiceNo', '請求番号'], ['date', '請求日'], ['customer', '客名'],
+  ['item', '品目'], ['qty', '数量'], ['unitPrice', '単価'], ['taxRate', '税率']
+];
+
+function isEmpty(v) {
+  return v === null || v === undefined || String(v).trim() === '';
+}
+
+function isNum(v) {
+  return typeof v === 'number' && isFinite(v);
+}
+
+function pad2(n) {
+  return (n < 10 ? '0' : '') + n;
+}
+
+/** 日付を「年/月/日」で比べるための文字列に（時刻は無視）。 */
+function dateKey(v) {
+  if (v instanceof Date) {
+    return v.getFullYear() + '/' + pad2(v.getMonth() + 1) + '/' + pad2(v.getDate());
+  }
+  var m = String(v).trim().match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
+  return m ? m[1] + '/' + pad2(Number(m[2])) + '/' + pad2(Number(m[3])) : String(v).trim();
+}
+
+/** 入力欄（状態以外）がすべて空の行。 */
+function isBlankRow(row) {
+  return REQUIRED.every(function (f) { return isEmpty(row[f[0]]); });
+}
+
+/**
+ * 作成済み以外の行を、最初に出た順で請求番号ごとにまとめる。
+ * 状態が空・未作成・エラーの行は対象（エラーは直して再実行できる）。
+ */
+function groupByInvoice(rows) {
+  var groups = [];
+  var index = {};
+  rows.forEach(function (row) {
+    if (isBlankRow(row) || String(row.status).trim() === DONE_STATUS) return;
+    var key = String(row.invoiceNo).trim();
+    if (!(key in index)) {
+      index[key] = groups.length;
+      groups.push({ invoiceNo: key, rows: [] });
+    }
+    groups[index[key]].rows.push(row);
+  });
+  return groups;
+}
+
+/** 問題なしなら null、あれば最初のエラー文言。 */
+function validateGroup(group) {
+  var rows = group.rows;
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    for (var j = 0; j < REQUIRED.length; j++) {
+      if (isEmpty(row[REQUIRED[j][0]])) return 'エラー：' + REQUIRED[j][1] + 'が空';
+    }
+    if (!isNum(row.qty)) return 'エラー：数量が数ではありません';
+    if (!isNum(row.unitPrice)) return 'エラー：単価が数ではありません';
+    if (normalizeTaxRate(row.taxRate) === null) return 'エラー：税率は10%か8%';
+  }
+  if (rows.length > MAX_LINES) return 'エラー：明細が' + MAX_LINES + '行をこえています';
+  for (var k = 1; k < rows.length; k++) {
+    if (String(rows[k].customer).trim() !== String(rows[0].customer).trim()) {
+      return 'エラー：同じ請求番号で客名がちがいます';
+    }
+    if (dateKey(rows[k].date) !== dateKey(rows[0].date)) {
+      return 'エラー：同じ請求番号で請求日がちがいます';
+    }
+  }
+  return null;
+}
+
+/** `請求番号_客名.pdf`。ファイル名に使えない文字は _ に。 */
+function makeFileName(invoiceNo, customer) {
+  return (String(invoiceNo).trim() + '_' + String(customer).trim())
+    .replace(/[\/\\:*?"<>|]/g, '_') + '.pdf';
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = {
+    normalizeTaxRate: normalizeTaxRate, calcTotals: calcTotals,
+    isBlankRow: isBlankRow, groupByInvoice: groupByInvoice,
+    validateGroup: validateGroup, makeFileName: makeFileName
+  };
+}
+
+// ===== sheet.js =====
+/**
+ * シートの読み書き（GAS専用）。
+ */
+
+var SHEET_SETTINGS = '設定';
+var SHEET_DETAIL = '明細';
+var COL_STATUS = 8; // H列
+var COL_PDF = 9;    // I列
+
+var SETTING_KEYS = {
+  '自社名': 'companyName',
+  '住所': 'address',
+  '振込先': 'bankAccount',
+  'インボイス登録番号': 'invoiceRegNo',
+  '保存フォルダ名': 'folderName'
+};
+
+function getSheetOrThrow_(ss, name) {
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) throw new Error('「' + name + '」シートがありません');
+  return sheet;
+}
+
+/** 「設定」シートA列の項目名でB列の値を引く。 */
+function readSettings(ss) {
+  var values = getSheetOrThrow_(ss, SHEET_SETTINGS).getDataRange().getValues();
+  var settings = { companyName: '', address: '', bankAccount: '', invoiceRegNo: '', folderName: '請求書' };
+  values.forEach(function (r) {
+    var key = SETTING_KEYS[String(r[0]).trim()];
+    if (key && String(r[1]).trim() !== '') settings[key] = String(r[1]).trim();
+  });
+  return settings;
+}
+
+/** 「明細」シート2行目以降を Row[] に。rowIndex はシートの行番号（1始まり）。 */
+function readDetailRows(ss) {
+  var values = getSheetOrThrow_(ss, SHEET_DETAIL).getDataRange().getValues();
+  var rows = [];
+  for (var i = 1; i < values.length; i++) {
+    var v = values[i];
+    rows.push({
+      rowIndex: i + 1,
+      invoiceNo: v[0], date: v[1], customer: v[2], item: v[3],
+      qty: v[4], unitPrice: v[5], taxRate: v[6], status: v[7]
+    });
+  }
+  return rows;
+}
+
+/** 指定行のH列に状態、I列にPDFリンク（null なら空）を書く。 */
+function writeStatus(ss, rowIndexes, status, pdfUrl) {
+  var sheet = getSheetOrThrow_(ss, SHEET_DETAIL);
+  rowIndexes.forEach(function (rowIndex) {
+    sheet.getRange(rowIndex, COL_STATUS, 1, 2).setValues([[status, pdfUrl || '']]);
+  });
+}
+
+// ===== pdf.js =====
+/**
+ * ひな形に値を流し込み、PDFにしてDriveへ保存する（GAS専用）。
+ */
+
+var SHEET_TEMPLATE = 'ひな形';
+var EXPORT_INTERVAL_MS = 1500;   // PDF化と PDF化の間に待つ時間
+var EXPORT_RETRY_WAIT_MS = 5000; // 429 のとき、やり直す前に待つ時間
+
+var TEMPLATE_CELLS = {
+  invoiceNo: 'F2',
+  date: 'F3',
+  customer: 'B4',
+  companyName: 'F5',
+  address: 'F6',
+  invoiceRegNo: 'F7',
+  lineFirstRow: 12,  // 明細 12〜26行
+  lineCols: { item: 2, qty: 4, unitPrice: 5, taxRate: 6, amount: 7 }, // B,D,E,F,G
+  subtotal10: 'G28',
+  tax10: 'G29',
+  subtotal8: 'G30',
+  tax8: 'G31',
+  total: 'G33',
+  bankAccount: 'B35'
+};
+
+function formatDate_(ss, v) {
+  return v instanceof Date
+    ? Utilities.formatDate(v, ss.getSpreadsheetTimeZone(), 'yyyy/MM/dd')
+    : String(v);
+}
+
+function rateLabel_(rate) {
+  // 軽減税率(8%)の明細には ※ を付ける（インボイスの記載要件）
+  return rate === 0.08 ? '8%※' : '10%';
+}
+
+function findRate_(totals, rate) {
+  var hit = totals.byRate.filter(function (x) { return x.rate === rate; })[0];
+  return hit || { subtotal: 0, tax: 0 };
+}
+
+function fillTemplate_(ss, sheet, settings, group, totals) {
+  var c = TEMPLATE_CELLS;
+  var first = group.rows[0];
+  sheet.getRange(c.invoiceNo).setValue(group.invoiceNo);
+  sheet.getRange(c.date).setValue(formatDate_(ss, first.date));
+  sheet.getRange(c.customer).setValue(String(first.customer).trim() + ' 御中');
+  sheet.getRange(c.companyName).setValue(settings.companyName);
+  sheet.getRange(c.address).setValue(settings.address);
+  sheet.getRange(c.invoiceRegNo).setValue(settings.invoiceRegNo);
+  sheet.getRange(c.bankAccount).setValue(settings.bankAccount);
+
+  group.rows.forEach(function (row, i) {
+    var r = c.lineFirstRow + i;
+    var rate = normalizeTaxRate(row.taxRate);
+    sheet.getRange(r, c.lineCols.item).setValue(row.item);
+    sheet.getRange(r, c.lineCols.qty).setValue(row.qty);
+    sheet.getRange(r, c.lineCols.unitPrice).setValue(row.unitPrice);
+    sheet.getRange(r, c.lineCols.taxRate).setValue(rateLabel_(rate));
+    sheet.getRange(r, c.lineCols.amount).setValue(row.qty * row.unitPrice);
+  });
+
+  var r10 = findRate_(totals, 0.1);
+  var r8 = findRate_(totals, 0.08);
+  sheet.getRange(c.subtotal10).setValue(r10.subtotal);
+  sheet.getRange(c.tax10).setValue(r10.tax);
+  sheet.getRange(c.subtotal8).setValue(r8.subtotal);
+  sheet.getRange(c.tax8).setValue(r8.tax);
+  sheet.getRange(c.total).setValue(totals.total);
+}
+
+function exportSheetPdf_(ss, sheet, fileName) {
+  var url = 'https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export' +
+    '?format=pdf&gid=' + sheet.getSheetId() +
+    '&portrait=true&size=A4&fitw=true&gridlines=false' +
+    '&sheetnames=false&printtitle=false&pagenumbers=false';
+  var options = {
+    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+    muteHttpExceptions: true
+  };
+  var res = UrlFetchApp.fetch(url, options);
+  if (res.getResponseCode() === 429) {
+    // 続けて呼ぶと制限がかかるので、少し待って1回だけやり直す
+    Utilities.sleep(EXPORT_RETRY_WAIT_MS);
+    res = UrlFetchApp.fetch(url, options);
+  }
+  if (res.getResponseCode() !== 200) {
+    throw new Error('PDF化に失敗（HTTP ' + res.getResponseCode() + '）');
+  }
+  return res.getBlob().setName(fileName);
+}
+
+/** 自分が持ち主で、ゴミ箱に入っていないフォルダだけを探す。無ければ作る。 */
+function getOrCreateFolder_(name) {
+  var safe = String(name).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  var it = DriveApp.searchFolders('title = "' + safe + '" and trashed = false and "me" in owners');
+  return it.hasNext() ? it.next() : DriveApp.createFolder(name);
+}
+
+/** 1請求分のPDFを作り、そのURLを返す。失敗時は例外。 */
+function createInvoicePdf(ss, settings, group) {
+  var template = ss.getSheetByName(SHEET_TEMPLATE);
+  if (!template) throw new Error('「' + SHEET_TEMPLATE + '」シートがありません');
+  var totals = calcTotals(group.rows);
+  var fileName = makeFileName(group.invoiceNo, group.rows[0].customer);
+  var copy = template.copyTo(ss).setName('tmp_' + Date.now());
+  try {
+    copy.showSheet();
+    fillTemplate_(ss, copy, settings, group, totals);
+    SpreadsheetApp.flush();
+    var blob = exportSheetPdf_(ss, copy, fileName);
+    var file = getOrCreateFolder_(settings.folderName).createFile(blob);
+    return file.getUrl();
+  } finally {
+    ss.deleteSheet(copy);
+  }
+}
+
+// ===== setup.js =====
+/**
+ * 見本用の「設定」「明細」「ひな形」シートを作る（GAS専用）。1回だけ実行。
+ * データはすべてダミー。
+ */
+
+function setupDemo() {
+  var ss = SpreadsheetApp.getActive();
+  var ui = SpreadsheetApp.getUi();
+  var detail = ss.getSheetByName('明細');
+  if (detail && detail.getLastRow() > 1) {
+    ui.alert('「明細」シートにデータがあるため、見本シートは作りません。\n' +
+      '見本を作るときは、新しいスプレッドシートで実行してください。');
+    return;
+  }
+  var answer = ui.alert('「設定」「明細」「ひな形」シートを見本の内容で作り直します。よろしいですか？',
+    ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
+  setupSettings_(ss);
+  setupDetail_(ss);
+  setupTemplate_(ss);
+  SpreadsheetApp.getUi().alert('見本シートを作りました。メニュー「請求書 → PDF作成」を試してください。');
+}
+
+function freshSheet_(ss, name) {
+  var sheet = ss.getSheetByName(name);
+  if (sheet) {
+    sheet.clear();
+  } else {
+    sheet = ss.insertSheet(name);
+  }
+  return sheet;
+}
+
+function setupSettings_(ss) {
+  var s = freshSheet_(ss, '設定');
+  s.getRange(1, 1, 5, 2).setValues([
+    ['自社名', 'サンプル商事（ダミー）'],
+    ['住所', '〒000-0000 架空県架空市1-2-3'],
+    ['振込先', 'サンプル銀行 本店 普通 0000000 サンプルショウジ'],
+    ['インボイス登録番号', 'T0000000000000'],
+    ['保存フォルダ名', '請求書']
+  ]);
+  s.setColumnWidth(1, 160).setColumnWidth(2, 360);
+}
+
+function setupDetail_(ss) {
+  var s = freshSheet_(ss, '明細');
+  var header = ['請求番号', '請求日', '客名', '品目', '数量', '単価', '税率', '状態', 'PDFリンク'];
+  var now = new Date();
+  var d = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // 時刻なし
+  var rows = [
+    ['INV-0001', d, '株式会社ダミーA', 'Webサイト保守（月額）', 1, 30000, 0.1, '未作成', ''],
+    ['INV-0002', d, 'ダミー食堂', '業務用食材', 10, 1250, 0.08, '未作成', ''],
+    ['INV-0002', d, 'ダミー食堂', '配送料', 1, 1500, 0.1, '未作成', ''],
+    ['INV-0003', d, 'ダミー工房', 'スプレッドシート自動化', 1, 15000, 0.1, '未作成', ''],
+    ['INV-0003', d, 'ダミー工房', '初回値引き', 1, -1500, 0.1, '未作成', ''],
+    ['INV-0004', d, 'ダミー書店', '', 1, 5000, 0.1, '未作成', '']
+  ];
+  s.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight('bold').setBackground('#eef2f7');
+  s.getRange(2, 1, rows.length, header.length).setValues(rows);
+  s.getRange('B2:B').setNumberFormat('yyyy/MM/dd');
+  s.getRange('F2:F').setNumberFormat('#,##0');
+  s.getRange('G2:G').setNumberFormat('0%');
+  s.setFrozenRows(1);
+  s.autoResizeColumns(1, header.length);
+}
+
+/** 「ひな形」シートだけを作り直す。明細・設定のデータには触らない。 */
+function updateTemplate() {
+  setupTemplate_(SpreadsheetApp.getActive());
+  SpreadsheetApp.getUi().alert('「ひな形」シートを最新の見た目に作り直しました。');
+}
+
+function setupTemplate_(ss) {
+  var s = freshSheet_(ss, 'ひな形');
+  s.getRange('A1:G40').breakApart();
+  s.setColumnWidth(1, 70).setColumnWidth(2, 220).setColumnWidth(3, 20)
+    .setColumnWidth(4, 60).setColumnWidth(5, 110).setColumnWidth(6, 150).setColumnWidth(7, 110);
+  s.getRange('A1:G1').merge().setValue('請　求　書').setFontSize(20)
+    .setFontWeight('bold').setHorizontalAlignment('center');
+  s.getRange('E2').setValue('請求番号');
+  s.getRange('E3').setValue('請求日');
+  s.getRange('B4').setFontSize(14).setFontWeight('bold');
+  s.getRange('E7').setValue('登録番号');
+  // 右上の値は文字として左寄せ（日付や番号が勝手に変換・右寄せされないように）
+  s.getRange('F2:F7').setNumberFormat('@').setHorizontalAlignment('left');
+  s.getRange('B6').setValue('下記のとおりご請求申し上げます。');
+  s.getRange('A9').setValue('ご請求金額');
+  s.getRange('B9').setFormula('=G33').setNumberFormat('"¥"#,##0').setFontSize(16).setFontWeight('bold');
+
+  s.getRange('A11:G11').setValues([['No', '品目', '', '数量', '単価', '税率', '金額']])
+    .setFontWeight('bold').setBackground('#eef2f7');
+  for (var i = 0; i < 15; i++) s.getRange(12 + i, 1).setValue(i + 1);
+  // 品目は B:C をつなげて1つの欄に（空き列をなくす）
+  for (var r = 11; r <= 26; r++) s.getRange(r, 2, 1, 2).merge();
+  // 税率は文字のまま中央に
+  s.getRange('F11:F26').setHorizontalAlignment('center');
+  s.getRange('F12:F26').setNumberFormat('@');
+  s.getRange('A11:G26').setBorder(true, true, true, true, true, true);
+  s.getRange('E12:E26').setNumberFormat('#,##0');
+  s.getRange('G12:G26').setNumberFormat('#,##0');
+
+  s.getRange('E28:E31').setValues([['10%対象 小計'], ['消費税（10%）'], ['8%対象 小計'], ['消費税（8%）']]);
+  s.getRange('E33').setValue('合計').setFontWeight('bold');
+  s.getRange('G28:G33').setNumberFormat('#,##0');
+  s.getRange('G33').setFontWeight('bold');
+  s.getRange('A34').setValue('※は軽減税率（8%）対象');
+  s.getRange('A35').setValue('振込先');
+  s.getRange('A1:G35').setFontFamily('Noto Sans JP');
+  s.hideSheet();
+}
+
+// ===== main.js =====
+/**
+ * メニュー登録と全体の流れ（GAS専用）。
+ */
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('請求書')
+    .addItem('PDF作成', 'createInvoices')
+    .addSeparator()
+    .addItem('ひな形を最新にする', 'updateTemplate')
+    .addItem('見本シートを作る', 'setupDemo')
+    .addToUi();
+}
+
+function createInvoices() {
+  var ss = SpreadsheetApp.getActive();
+  var settings = readSettings(ss);
+  var groups = groupByInvoice(readDetailRows(ss));
+  var ok = 0;
+  var ng = 0;
+
+  groups.forEach(function (group) {
+    var rowIndexes = group.rows.map(function (r) { return r.rowIndex; });
+    var error = validateGroup(group);
+    if (error) {
+      writeStatus(ss, rowIndexes, error, null);
+      ng++;
+      return;
+    }
+    try {
+      if (ok > 0) Utilities.sleep(EXPORT_INTERVAL_MS); // 連続PDF化の制限よけ
+      var url = createInvoicePdf(ss, settings, group);
+      writeStatus(ss, rowIndexes, DONE_STATUS, url);
+      ok++;
+    } catch (e) {
+      writeStatus(ss, rowIndexes, 'エラー：' + (e && e.message ? e.message : e), null);
+      ng++;
+    }
+  });
+
+  SpreadsheetApp.getUi().alert('作成 ' + ok + '件、エラー ' + ng + '件');
+}
+
