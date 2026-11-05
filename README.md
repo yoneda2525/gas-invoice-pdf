@@ -17,9 +17,21 @@
 
 ![明細シート](docs/images/sheet.png)
 
+メニュー：
+
+![請求書メニュー](docs/images/menu.png)
+
 作成されるPDF（ダミーデータ）：
 
 ![請求書PDF](docs/images/invoice.png)
+
+## 試してみる
+
+[見本スプレッドシートをコピーする](https://docs.google.com/spreadsheets/d/1PlhgIG-oIFfSvImgkas1WK6zGw3qrLMlXOGHDQjFbnY/copy)
+
+- コピーするとコードも一緒に付いてきます。メニュー「請求書 → PDF作成」で、自分のドライブにPDFができます（初回は権限の許可が必要）。
+- 見本に入っている「PDFを開く」リンクは作者のドライブを指すため、開けません。
+- データはすべて架空のものです。
 
 ## 導入手順
 
